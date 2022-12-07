@@ -36,18 +36,6 @@ def Input(
     )
 
 
-def get_filename(url: str) -> str:
-    parsed_url = urlparse(url)
-    if parsed_url.scheme == "data":
-        header, _ = parsed_url.path.split(",", 1)
-        mime_type, _ = header.split(";", 1)
-        extension = mimetypes.guess_extension(mime_type)
-        if extension is None:
-            return "file"
-        return "file" + extension
-    return os.path.basename(parsed_url.path)
-
-
 class File(io.IOBase):
     validate_always = True
 
@@ -67,10 +55,7 @@ class File(io.IOBase):
             header, encoded = parsed_url.path.split(",", 1)
             return io.BytesIO(base64.b64decode(encoded))
         elif parsed_url.scheme == "http" or parsed_url.scheme == "https":
-            resp = requests.get(value, stream=True)
-            resp.raise_for_status()
-            resp.raw.decode_content = True
-            return resp.raw
+            return URLFile(value)
         else:
             raise ValueError(
                 f"'{parsed_url.scheme}' is not a valid URL scheme. 'data', 'http', or 'https' is supported."
@@ -105,3 +90,35 @@ class Path(pathlib.PosixPath):
         """Defines what this type should be in openapi.json"""
         # https://json-schema.org/understanding-json-schema/reference/string.html#uri-template
         field_schema.update(type="string", format="uri")
+
+
+class URLFile(io.IOBase):
+    def __init__(self, url):
+        self._url = url
+        self._response = None
+
+    def read(self, *args, **kwargs):
+        self._fetch()
+        assert self._response
+        return self._response.read(*args, **kwargs)
+
+    # FIXME: implement the rest of the IOBase interface
+
+    def _fetch(self):
+        if self._response is None:
+            resp = requests.get(self._url, stream=True)
+            resp.raise_for_status()
+            resp.raw.decode_content = True
+            self._response = resp.raw
+
+
+def get_filename(url: str) -> str:
+    parsed_url = urlparse(url)
+    if parsed_url.scheme == "data":
+        header, _ = parsed_url.path.split(",", 1)
+        mime_type, _ = header.split(";", 1)
+        extension = mimetypes.guess_extension(mime_type)
+        if extension is None:
+            return "file"
+        return "file" + extension
+    return os.path.basename(parsed_url.path)
